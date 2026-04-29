@@ -1,9 +1,10 @@
 """SentinelRAG — Policy-Aware RAG backend (FastAPI).
 
 Pipeline:
-    auth (JWT) → guardrails → pre-filter (RBAC+ABAC) → retrieve (TF-IDF) → LLM → audit log
+    auth (JWT) → guardrails → Chroma vector search pre-filtered by RBAC+ABAC → LLM → audit log
 """
 import os
+import json
 import uuid
 import logging
 from pathlib import Path
@@ -11,7 +12,7 @@ from datetime import datetime, timezone
 from typing import List
 
 from fastapi import FastAPI, APIRouter, Depends, HTTPException
-from fastapi.security import HTTPAuthorizationCredentials
+from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -25,7 +26,7 @@ from models import (
     ChatRequest, ChatResponse, Citation, AuditLog,
 )
 from auth import (
-    verify_password, create_access_token, get_current_user_factory, require_admin,
+    verify_password, create_access_token, decode_token, bearer_scheme, require_admin,
 )
 import rbac
 import rag
@@ -38,30 +39,46 @@ mongo_url = os.environ["MONGO_URL"]
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ["DB_NAME"]]
 
-# ── App ────────────────────────────────────────────────────────────────────────
 app = FastAPI(title="SentinelRAG")
 api_router = APIRouter(prefix="/api")
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("sentinel_rag")
-
-get_current_user = None  # bound on startup
 
 
 # ── Startup ────────────────────────────────────────────────────────────────────
 @app.on_event("startup")
 async def _startup():
-    global get_current_user
-    get_current_user = await get_current_user_factory(db)
     await seed_module.seed_database(db)
-    logger.info("SentinelRAG startup complete — seed verified.")
+    # Rebuild Chroma vector index from the current Mongo corpus.
+    all_docs = await db.documents.find({}, {"_id": 0}).to_list(10_000)
+    count = rag.rebuild_index(all_docs)
+    logger.info(f"SentinelRAG startup — {len(all_docs)} docs, {count} chunks indexed in Chroma.")
 
 
 @app.on_event("shutdown")
 async def _shutdown():
     client.close()
+
+
+# ── Auth dependency ────────────────────────────────────────────────────────────
+async def _current_user(creds=Depends(bearer_scheme)) -> UserPublic:
+    if not creds:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = decode_token(creds.credentials)
+    username = payload.get("sub")
+    user_doc = await db.users.find_one({"username": username}, {"_id": 0})
+    if not user_doc:
+        raise HTTPException(status_code=401, detail="User not found")
+    return UserPublic(**{k: user_doc[k] for k in UserPublic.model_fields.keys()})
+
+
+async def _user_from_token_string(token: str) -> UserPublic:
+    payload = decode_token(token)
+    user_doc = await db.users.find_one({"username": payload.get("sub")}, {"_id": 0})
+    if not user_doc:
+        raise HTTPException(status_code=401, detail="User not found")
+    return UserPublic(**{k: user_doc[k] for k in UserPublic.model_fields.keys()})
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -76,22 +93,51 @@ def _to_public_doc(doc: dict) -> DocumentPublic:
     return DocumentPublic(**d)
 
 
-def _user_dep():
-    async def _inner(creds: HTTPAuthorizationCredentials = Depends(__import__("auth").bearer_scheme)):
-        return await get_current_user(credentials=creds)
-    return _inner
+async def _run_chat_core(user: UserPublic, query: str, session_id: str):
+    """Shared RBAC+retrieval pipeline used by both /chat and /chat/stream."""
+    triggered, reason = guardrails.check_query(query)
+
+    # Count how many docs the user is excluded from (for UX / audit).
+    all_docs = await _load_all_documents()
+    _, filtered_out = rbac.filter_documents(user, all_docs)
+
+    # Vector retrieval is already restricted by Chroma's where clause.
+    results = rag.retrieve(user, query, k=4)
+    context_docs = [chunk for chunk, _ in results]
+    citations = [
+        Citation(
+            doc_id=c["doc_id"], title=c["title"],
+            department=c["department"], sensitivity=c["sensitivity"],
+            score=round(s, 4),
+        )
+        for c, s in results
+    ]
+
+    if not context_docs and filtered_out > 0:
+        decision = "denied"
+    elif filtered_out > 0:
+        decision = "partial"
+    else:
+        decision = "granted"
+
+    return {
+        "triggered": triggered, "reason": reason,
+        "context_docs": context_docs, "citations": citations,
+        "decision": decision, "filtered_out": filtered_out,
+        "session_id": session_id,
+    }
 
 
-async def _current_user(creds=Depends(__import__("auth").bearer_scheme)) -> UserPublic:
-    if not creds:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    from auth import decode_token
-    payload = decode_token(creds.credentials)
-    username = payload.get("sub")
-    user_doc = await db.users.find_one({"username": username}, {"_id": 0})
-    if not user_doc:
-        raise HTTPException(status_code=401, detail="User not found")
-    return UserPublic(**{k: user_doc[k] for k in UserPublic.model_fields.keys()})
+async def _write_audit(user: UserPublic, query: str, state: dict, answer: str | None):
+    log = AuditLog(
+        username=user.username, role=user.role, department=user.department,
+        query=query, access=state["decision"], guardrail_triggered=state["triggered"],
+        cited_doc_ids=[c.doc_id for c in state["citations"]],
+        filtered_out_count=state["filtered_out"],
+    )
+    payload = log.model_dump()
+    payload["timestamp"] = payload["timestamp"].isoformat()
+    await db.audit_logs.insert_one(payload)
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
@@ -118,7 +164,6 @@ async def me(user: UserPublic = Depends(_current_user)):
 # ── Documents ──────────────────────────────────────────────────────────────────
 @api_router.get("/documents", response_model=List[DocumentPublic])
 async def list_documents(user: UserPublic = Depends(_current_user)):
-    """Returns only documents the caller is authorized to see."""
     docs = await _load_all_documents()
     allowed, _ = rbac.filter_documents(user, docs)
     return [_to_public_doc(d) for d in allowed]
@@ -126,10 +171,8 @@ async def list_documents(user: UserPublic = Depends(_current_user)):
 
 @api_router.get("/documents/all", response_model=List[DocumentPublic])
 async def list_all_documents(user: UserPublic = Depends(_current_user)):
-    """Admin-only: list every document regardless of access."""
     require_admin(user)
-    docs = await _load_all_documents()
-    return [_to_public_doc(d) for d in docs]
+    return [_to_public_doc(d) for d in await _load_all_documents()]
 
 
 @api_router.post("/documents", response_model=DocumentPublic)
@@ -139,6 +182,8 @@ async def create_document(body: DocumentCreate, user: UserPublic = Depends(_curr
     payload = doc.model_dump()
     payload["uploaded_at"] = payload["uploaded_at"].isoformat()
     await db.documents.insert_one(payload)
+    # Index chunks in Chroma
+    rag.upsert_document(payload)
     return _to_public_doc(payload)
 
 
@@ -148,65 +193,78 @@ async def delete_document(doc_id: str, user: UserPublic = Depends(_current_user)
     res = await db.documents.delete_one({"id": doc_id})
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Document not found")
+    rag.remove_document(doc_id)
     return {"deleted": doc_id}
 
 
-# ── Chat ───────────────────────────────────────────────────────────────────────
+# ── Chat (non-streaming, kept for parity) ──────────────────────────────────────
 @api_router.post("/chat", response_model=ChatResponse)
 async def chat(body: ChatRequest, user: UserPublic = Depends(_current_user)):
     session_id = body.session_id or str(uuid.uuid4())
-
-    # 1. Guardrails (advisory – do not block)
-    triggered, reason = guardrails.check_query(body.query)
-
-    # 2. Pre-filter (RBAC + ABAC) BEFORE retrieval
-    all_docs = await _load_all_documents()
-    allowed, filtered_out = rbac.filter_documents(user, all_docs)
-
-    # 3. Retrieve top-k relevant docs from the allowed subset only
-    top = rag.retrieve_top_k(body.query, allowed, k=4)
-    context_docs = [d for d, _ in top]
-    citations = [
-        Citation(
-            doc_id=d["id"], title=d["title"], department=d["department"],
-            sensitivity=d["sensitivity"], score=round(s, 4),
-        )
-        for d, s in top
-    ]
-
-    # 4. LLM answer (context is exclusively authorized material)
+    state = await _run_chat_core(user, body.query, session_id)
     try:
-        answer = await llm_service.generate_answer(body.query, context_docs, session_id)
-    except Exception as e:  # surface a polite error without leaking internals
+        answer = await llm_service.generate_answer(body.query, state["context_docs"], session_id)
+    except Exception as e:
         logger.exception("LLM call failed")
         raise HTTPException(status_code=502, detail=f"LLM error: {e}")
-
-    # 5. Decide access outcome
-    if not context_docs and filtered_out > 0:
-        decision = "denied"
-    elif filtered_out > 0:
-        decision = "partial"
-    else:
-        decision = "granted"
-
-    # 6. Audit log
-    log = AuditLog(
-        username=user.username, role=user.role, department=user.department,
-        query=body.query, access=decision, guardrail_triggered=triggered,
-        cited_doc_ids=[c.doc_id for c in citations], filtered_out_count=filtered_out,
-    )
-    log_payload = log.model_dump()
-    log_payload["timestamp"] = log_payload["timestamp"].isoformat()
-    await db.audit_logs.insert_one(log_payload)
-
+    await _write_audit(user, body.query, state, answer)
     return ChatResponse(
-        answer=answer, citations=citations, access_decision=decision,
-        guardrail_triggered=triggered, guardrail_reason=reason or None,
-        filtered_out_count=filtered_out, session_id=session_id,
+        answer=answer, citations=state["citations"], access_decision=state["decision"],
+        guardrail_triggered=state["triggered"], guardrail_reason=state["reason"] or None,
+        filtered_out_count=state["filtered_out"], session_id=session_id,
     )
 
 
-# ── Audit Logs ─────────────────────────────────────────────────────────────────
+# ── Chat (streaming via Server-Sent Events) ────────────────────────────────────
+@api_router.post("/chat/stream")
+async def chat_stream(body: ChatRequest, user: UserPublic = Depends(_current_user)):
+    """SSE streaming chat.
+
+    Emits three kinds of events:
+      event: meta    → initial access decision + citations + guardrail info
+      event: token   → incremental text fragments of the answer
+      event: done    → final signal with the full answer string
+    """
+    session_id = body.session_id or str(uuid.uuid4())
+    state = await _run_chat_core(user, body.query, session_id)
+
+    async def event_stream():
+        meta = {
+            "session_id": session_id,
+            "access_decision": state["decision"],
+            "guardrail_triggered": state["triggered"],
+            "guardrail_reason": state["reason"] or None,
+            "filtered_out_count": state["filtered_out"],
+            "citations": [c.model_dump() for c in state["citations"]],
+        }
+        yield f"event: meta\ndata: {json.dumps(meta)}\n\n"
+
+        buffer: list[str] = []
+        try:
+            async for tok in llm_service.stream_answer(body.query, state["context_docs"], session_id):
+                buffer.append(tok)
+                yield f"event: token\ndata: {json.dumps({'t': tok})}\n\n"
+        except Exception as e:
+            logger.exception("LLM stream failed")
+            yield f"event: error\ndata: {json.dumps({'detail': str(e)})}\n\n"
+            return
+
+        answer = "".join(buffer)
+        await _write_audit(user, body.query, state, answer)
+        yield f"event: done\ndata: {json.dumps({'answer': answer})}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+# ── Audit Logs / Users ─────────────────────────────────────────────────────────
 @api_router.get("/audit-logs", response_model=List[AuditLog])
 async def audit_logs(user: UserPublic = Depends(_current_user), limit: int = 200):
     require_admin(user)
@@ -233,4 +291,5 @@ app.add_middleware(
     allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )

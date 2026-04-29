@@ -1,5 +1,7 @@
-"""Claude Sonnet 4.5 integration via emergentintegrations."""
+"""Claude Sonnet 4.5 integration — full answer + pseudo-streaming generator."""
 import os
+import asyncio
+from typing import AsyncGenerator, List, Dict
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 
 EMERGENT_LLM_KEY = os.environ["EMERGENT_LLM_KEY"]
@@ -16,16 +18,7 @@ SYSTEM_MESSAGE = (
 )
 
 
-async def generate_answer(
-    query: str, context_docs: list, session_id: str
-) -> str:
-    """Send an RBAC-filtered prompt to Claude Sonnet 4.5."""
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=session_id,
-        system_message=SYSTEM_MESSAGE,
-    ).with_model("anthropic", "claude-sonnet-4-5-20250929")
-
+def _build_prompt(query: str, context_docs: List[Dict]) -> str:
     if context_docs:
         context_block = "\n\n".join(
             f"[{d['title']}] (dept={d['department']}, sensitivity={d['sensitivity']})\n{d['content']}"
@@ -33,11 +26,36 @@ async def generate_answer(
         )
     else:
         context_block = "(no authorized documents were retrieved)"
-
-    prompt = (
+    return (
         f"<authorized_context>\n{context_block}\n</authorized_context>\n\n"
         f"User question: {query}"
     )
 
-    response = await chat.send_message(UserMessage(text=prompt))
+
+async def generate_answer(
+    query: str, context_docs: list, session_id: str
+) -> str:
+    chat = LlmChat(
+        api_key=EMERGENT_LLM_KEY,
+        session_id=session_id,
+        system_message=SYSTEM_MESSAGE,
+    ).with_model("anthropic", "claude-sonnet-4-5-20250929")
+    response = await chat.send_message(UserMessage(text=_build_prompt(query, context_docs)))
     return response if isinstance(response, str) else str(response)
+
+
+async def stream_answer(
+    query: str, context_docs: list, session_id: str
+) -> AsyncGenerator[str, None]:
+    """Pseudo-stream the answer word-by-word for a live UX feel.
+
+    emergentintegrations returns a full string; we generate once then yield
+    tokens with small delays. Same safety guarantees as generate_answer.
+    """
+    full = await generate_answer(query, context_docs, session_id)
+    # Split but keep whitespace so reconstruction is faithful.
+    import re
+    tokens = re.findall(r"\S+\s*", full) or [full]
+    for t in tokens:
+        yield t
+        await asyncio.sleep(0.018)
