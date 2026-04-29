@@ -1,10 +1,18 @@
-"""Claude Sonnet 4.5 integration — full answer + pseudo-streaming generator."""
+"""Claude Sonnet 4.5 integration with TRUE streaming via litellm + Emergent proxy."""
 import os
 import asyncio
+import logging
 from typing import AsyncGenerator, List, Dict
+
+import litellm
 from emergentintegrations.llm.chat import LlmChat, UserMessage
+from emergentintegrations.llm.utils import get_app_identifier, get_integration_proxy_url
+
+logger = logging.getLogger("sentinel_rag.llm")
 
 EMERGENT_LLM_KEY = os.environ["EMERGENT_LLM_KEY"]
+MODEL = "claude-sonnet-4-5-20250929"
+PROVIDER = "anthropic"
 
 SYSTEM_MESSAGE = (
     "You are SentinelRAG, an enterprise policy-aware assistant. "
@@ -32,30 +40,62 @@ def _build_prompt(query: str, context_docs: List[Dict]) -> str:
     )
 
 
-async def generate_answer(
-    query: str, context_docs: list, session_id: str
-) -> str:
+# ── Non-streaming (kept for /api/chat parity and tests) ───────────────────────
+async def generate_answer(query: str, context_docs: list, session_id: str) -> str:
     chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=session_id,
-        system_message=SYSTEM_MESSAGE,
-    ).with_model("anthropic", "claude-sonnet-4-5-20250929")
+        api_key=EMERGENT_LLM_KEY, session_id=session_id, system_message=SYSTEM_MESSAGE,
+    ).with_model(PROVIDER, MODEL)
     response = await chat.send_message(UserMessage(text=_build_prompt(query, context_docs)))
     return response if isinstance(response, str) else str(response)
+
+
+# ── True streaming via the Emergent litellm proxy ─────────────────────────────
+def _build_litellm_params(messages: List[Dict]) -> Dict:
+    """Mirror emergentintegrations._execute_completion() but for streaming."""
+    proxy_url = get_integration_proxy_url()
+    headers = {}
+    app_id = get_app_identifier()
+    if app_id:
+        headers["X-App-ID"] = app_id
+    return {
+        "model": MODEL,
+        "messages": messages,
+        "api_key": EMERGENT_LLM_KEY,
+        "api_base": proxy_url + "/llm",
+        "custom_llm_provider": "openai",  # Emergent proxy speaks OpenAI shape
+        "stream": True,
+        "extra_headers": headers,
+    }
 
 
 async def stream_answer(
     query: str, context_docs: list, session_id: str
 ) -> AsyncGenerator[str, None]:
-    """Pseudo-stream the answer word-by-word for a live UX feel.
+    """Yield real Claude tokens as they arrive from the streaming endpoint.
 
-    emergentintegrations returns a full string; we generate once then yield
-    tokens with small delays. Same safety guarantees as generate_answer.
+    Falls back to pseudo-streaming (full response → word chunks) only if the
+    streaming call raises, so callers always receive content.
     """
-    full = await generate_answer(query, context_docs, session_id)
-    # Split but keep whitespace so reconstruction is faithful.
-    import re
-    tokens = re.findall(r"\S+\s*", full) or [full]
-    for t in tokens:
-        yield t
-        await asyncio.sleep(0.018)
+    messages = [
+        {"role": "system", "content": SYSTEM_MESSAGE},
+        {"role": "user", "content": _build_prompt(query, context_docs)},
+    ]
+    params = _build_litellm_params(messages)
+
+    try:
+        response = await litellm.acompletion(**params)
+        async for chunk in response:
+            try:
+                delta = chunk.choices[0].delta
+                content = getattr(delta, "content", None) or ""
+            except Exception:
+                content = ""
+            if content:
+                yield content
+    except Exception as e:
+        logger.warning(f"True streaming failed, falling back: {e}")
+        full = await generate_answer(query, context_docs, session_id)
+        import re
+        for tok in re.findall(r"\S+\s*", full) or [full]:
+            yield tok
+            await asyncio.sleep(0.018)

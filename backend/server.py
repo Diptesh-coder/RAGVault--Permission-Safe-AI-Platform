@@ -53,7 +53,12 @@ async def _startup():
     # Rebuild Chroma vector index from the current Mongo corpus.
     all_docs = await db.documents.find({}, {"_id": 0}).to_list(10_000)
     count = rag.rebuild_index(all_docs)
-    logger.info(f"SentinelRAG startup — {len(all_docs)} docs, {count} chunks indexed in Chroma.")
+    # Warm the ONNX embedding model so the first user query is fast.
+    try:
+        rag.warmup()
+        logger.info(f"SentinelRAG startup — {len(all_docs)} docs, {count} chunks indexed; embedder warm.")
+    except Exception as e:
+        logger.warning(f"Embedder warmup failed (non-fatal): {e}")
 
 
 @app.on_event("shutdown")

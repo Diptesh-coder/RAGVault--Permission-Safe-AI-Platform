@@ -46,12 +46,23 @@ export default function ChatPage() {
 
   const sendStream = async (q) => {
     const token = localStorage.getItem("sr_token");
-    const resp = await fetch(`${API}/chat/stream`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ query: q, session_id: sessionId }),
-    });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const controller = new AbortController();
+    // Abort the SSE socket if no `done` event arrives within 60s.
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
+
+    let resp;
+    try {
+      resp = await fetch(`${API}/chat/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ query: q, session_id: sessionId }),
+        signal: controller.signal,
+      });
+    } catch (e) {
+      clearTimeout(timeoutId);
+      throw e;
+    }
+    if (!resp.ok) { clearTimeout(timeoutId); throw new Error(`HTTP ${resp.status}`); }
 
     // Seed an empty assistant message
     setMessages((m) => [...m, { role: "assistant", answer: "", citations: [], access_decision: "granted", _streaming: true }]);
@@ -59,47 +70,69 @@ export default function ChatPage() {
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     let buf = "";
+    let doneSeen = false;
 
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      const [events, remainder] = parseSSE(buf);
-      buf = remainder;
-      for (const ev of events) {
-        let payload;
-        try { payload = JSON.parse(ev.data); } catch { continue; }
-        if (ev.event === "meta") {
-          setSessionId(payload.session_id);
-          setMessages((m) => {
-            const arr = [...m];
-            const last = arr[arr.length - 1];
-            last.citations = payload.citations || [];
-            last.access_decision = payload.access_decision;
-            last.guardrail_triggered = payload.guardrail_triggered;
-            last.guardrail_reason = payload.guardrail_reason;
-            last.filtered_out_count = payload.filtered_out_count;
-            return arr;
-          });
-        } else if (ev.event === "token") {
-          setMessages((m) => {
-            const arr = [...m];
-            const last = arr[arr.length - 1];
-            last.answer = (last.answer || "") + (payload.t || "");
-            return arr;
-          });
-        } else if (ev.event === "done") {
-          setMessages((m) => {
-            const arr = [...m];
-            const last = arr[arr.length - 1];
-            last._streaming = false;
-            if (payload.answer) last.answer = payload.answer;
-            return arr;
-          });
-        } else if (ev.event === "error") {
-          throw new Error(payload.detail || "stream error");
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        // Reset the watchdog every time we get bytes — keep alive while the model is producing.
+        clearTimeout(timeoutId);
+        const watchdog = setTimeout(() => controller.abort(), 60000);
+        buf += decoder.decode(value, { stream: true });
+        const [events, remainder] = parseSSE(buf);
+        buf = remainder;
+        for (const ev of events) {
+          let payload;
+          try { payload = JSON.parse(ev.data); } catch { continue; }
+          if (ev.event === "meta") {
+            setSessionId(payload.session_id);
+            setMessages((m) => {
+              const arr = [...m];
+              const last = arr[arr.length - 1];
+              last.citations = payload.citations || [];
+              last.access_decision = payload.access_decision;
+              last.guardrail_triggered = payload.guardrail_triggered;
+              last.guardrail_reason = payload.guardrail_reason;
+              last.filtered_out_count = payload.filtered_out_count;
+              return arr;
+            });
+          } else if (ev.event === "token") {
+            setMessages((m) => {
+              const arr = [...m];
+              const last = arr[arr.length - 1];
+              last.answer = (last.answer || "") + (payload.t || "");
+              return arr;
+            });
+          } else if (ev.event === "done") {
+            doneSeen = true;
+            setMessages((m) => {
+              const arr = [...m];
+              const last = arr[arr.length - 1];
+              last._streaming = false;
+              if (payload.answer) last.answer = payload.answer;
+              return arr;
+            });
+            clearTimeout(watchdog);
+          } else if (ev.event === "error") {
+            clearTimeout(watchdog);
+            throw new Error(payload.detail || "stream error");
+          }
         }
+        clearTimeout(watchdog);
       }
+    } finally {
+      clearTimeout(timeoutId);
+      // Ensure UI exits the streaming state even if the socket dropped early.
+      setMessages((m) => {
+        const arr = [...m];
+        const last = arr[arr.length - 1];
+        if (last && last.role === "assistant" && last._streaming) {
+          last._streaming = false;
+          if (!doneSeen) last.answer = (last.answer || "") + "\n\n⚠︎ Stream interrupted.";
+        }
+        return arr;
+      });
     }
   };
 

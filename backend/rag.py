@@ -28,6 +28,16 @@ def _get_collection():
     return _client.get_or_create_collection(name=_COLLECTION)
 
 
+def warmup() -> None:
+    """Force the embedding model to load + run once so the first real query is fast."""
+    col = _get_collection()
+    try:
+        # A throwaway query primes the ONNX model + tokenizer.
+        col.query(query_texts=["warmup"], n_results=1)
+    except Exception:
+        pass
+
+
 # ── Index maintenance ─────────────────────────────────────────────────────────
 def rebuild_index(all_docs: List[Dict]) -> int:
     """Wipe the collection and reindex every chunk. Idempotent, called on startup."""
