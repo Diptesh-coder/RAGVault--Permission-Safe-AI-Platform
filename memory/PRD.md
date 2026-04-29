@@ -25,6 +25,11 @@ Full-stack Permission-Aware AI system using Retrieval-Augmented Generation (RAG)
 6. Admin dashboard (upload, delete, view audit + users)
 7. Explainability — citations + access decision visible in UI
 
+## Iteration 4 (2026-02) — operability: smoke + Prometheus
+- **GET /api/metrics**: Prometheus exposition format. Counters `sentinel_stream_total`, `sentinel_stream_fallback_total`, `sentinel_chat_decision_total{decision}`, `sentinel_guardrail_triggered_total`; histogram `sentinel_stream_first_token_seconds`.
+- **`/app/backend/scripts/smoke_stream.py`**: stdlib-only CI-cron smoke test. Asserts first SSE chunk arrives within `SENTINEL_MAX_FIRST_TOKEN` seconds (default 6s) AND `sentinel_stream_fallback_total` did not increment during the run. Exits 0/1 deterministically. Run with `SENTINEL_BASE_URL=… python3 backend/scripts/smoke_stream.py`.
+- 48/48 backend tests green (full regression).
+
 ## Iteration 3 (2026-02) — true streaming + warmup + watchdog
 - TRUE LLM streaming via `litellm.acompletion(stream=True)` through the Emergent proxy. Measured Δ(meta → first-token) ≈ 3-5s = real Claude TTFB (vs the iter-2 pseudo-stream's 18ms uniform delay)
 - Graceful fallback: if real-stream raises, automatically falls back to pseudo-stream so callers always receive content
