@@ -1,0 +1,110 @@
+name: SentinelRAG CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  backend-tests-and-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd="mongosh --quiet --eval 'db.runCommand({ping:1}).ok' || mongo --quiet --eval 'db.runCommand({ping:1}).ok'"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+
+    env:
+      MONGO_URL: mongodb://localhost:27017
+      DB_NAME: sentinel_ci
+      CORS_ORIGINS: "*"
+      JWT_SECRET: ci-secret-do-not-use-in-prod
+      JWT_ALGORITHM: HS256
+      JWT_EXPIRE_MINUTES: "60"
+      METRICS_TOKEN: ci-metrics-token
+      EMERGENT_LLM_KEY: ${{ secrets.EMERGENT_LLM_KEY }}
+      REACT_APP_BACKEND_URL: http://localhost:8001
+      SENTINEL_BASE_URL: http://localhost:8001
+      SENTINEL_USER: alice
+      SENTINEL_PASS: admin123
+      SENTINEL_METRICS_TOKEN: ci-metrics-token
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/ \
+            -r backend/requirements.txt
+          pip install pytest
+
+      - name: Verify EMERGENT_LLM_KEY is set
+        run: |
+          if [ -z "${EMERGENT_LLM_KEY}" ]; then
+            echo "::error::EMERGENT_LLM_KEY repository secret is not set."
+            echo "Add it under Settings → Secrets → Actions → New repository secret."
+            exit 1
+          fi
+          echo "EMERGENT_LLM_KEY is configured."
+
+      - name: Wait for MongoDB
+        run: |
+          for i in $(seq 1 30); do
+            if (echo > /dev/tcp/localhost/27017) >/dev/null 2>&1; then
+              echo "Mongo up after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::MongoDB did not become ready"; exit 1
+
+      - name: Start backend (uvicorn, background)
+        working-directory: backend
+        run: |
+          nohup python -m uvicorn server:app --host 0.0.0.0 --port 8001 \
+            > /tmp/backend.log 2>&1 &
+          echo "BACKEND_PID=$!" >> $GITHUB_ENV
+
+      - name: Wait for /api health
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fs http://localhost:8001/api/ >/dev/null; then
+              echo "Backend ready after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Backend did not become ready"
+          tail -n 200 /tmp/backend.log
+          exit 1
+
+      - name: Run pytest
+        working-directory: backend
+        run: pytest tests/ -v --tb=short
+
+      - name: Run streaming smoke test
+        run: python3 backend/scripts/smoke_stream.py
+
+      - name: Tail backend log on failure
+        if: failure()
+        run: tail -n 300 /tmp/backend.log || true
+
+      - name: Stop backend
+        if: always()
+        run: |
+          if [ -n "${BACKEND_PID:-}" ]; then
+            kill "${BACKEND_PID}" 2>/dev/null || true
+          fi

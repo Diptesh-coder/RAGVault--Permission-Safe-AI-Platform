@@ -9,6 +9,7 @@ import ChatPage from "@/pages/ChatPage";
 import DocumentsPage from "@/pages/DocumentsPage";
 import AuditPage from "@/pages/AuditPage";
 import UsersPage from "@/pages/UsersPage";
+import OpsPage from "@/pages/OpsPage";
 
 export default function App() {
   return (
@@ -22,6 +23,7 @@ export default function App() {
             <Route path="/documents" element={<ProtectedRoute><DocumentsPage /></ProtectedRoute>} />
             <Route path="/admin/audit" element={<ProtectedRoute adminOnly><AuditPage /></ProtectedRoute>} />
             <Route path="/admin/users" element={<ProtectedRoute adminOnly><UsersPage /></ProtectedRoute>} />
+            <Route path="/admin/ops" element={<ProtectedRoute adminOnly><OpsPage /></ProtectedRoute>} />
             <Route path="*" element={<Navigate to="/chat" replace />} />
           </Routes>
         </BrowserRouter>

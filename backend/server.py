@@ -294,6 +294,17 @@ async def chat_stream(body: ChatRequest, user: UserPublic = Depends(_current_use
 
 
 # ── Audit Logs / Users ─────────────────────────────────────────────────────────
+@api_router.get("/admin/ops")
+async def admin_ops(user: UserPublic = Depends(_current_user)):
+    """Admin-only KPI snapshot.
+
+    Reads the in-process Prometheus registry so the frontend never needs to
+    know METRICS_TOKEN. Returns the four headline KPIs plus raw counters.
+    """
+    require_admin(user)
+    return metrics.snapshot()
+
+
 @api_router.get("/audit-logs", response_model=List[AuditLog])
 async def audit_logs(user: UserPublic = Depends(_current_user), limit: int = 200):
     require_admin(user)

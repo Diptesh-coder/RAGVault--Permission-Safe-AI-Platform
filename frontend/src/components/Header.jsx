@@ -1,5 +1,5 @@
 import { NavLink, useNavigate } from "react-router-dom";
-import { Shield, MessageSquare, FileText, ScrollText, LogOut, Users } from "lucide-react";
+import { Shield, MessageSquare, FileText, ScrollText, LogOut, Users, Activity } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 
 const roleTint = {
@@ -53,6 +53,7 @@ export default function Header() {
           {navItem("/chat", "Chat", MessageSquare, "nav-chat")}
           {navItem("/documents", "Documents", FileText, "nav-documents")}
           {user.role === "admin" && navItem("/admin/audit", "Audit", ScrollText, "nav-audit")}
+          {user.role === "admin" && navItem("/admin/ops", "Ops", Activity, "nav-ops")}
           {user.role === "admin" && navItem("/admin/users", "Users", Users, "nav-users")}
         </nav>
 

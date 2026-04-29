@@ -1,0 +1,38 @@
+{
+  "summary": "Iter-8 backend-only testing complete. 9/9 new iter-8 tests pass and full cumulative regression is 89/89 green (iter1 17 + iter2 11 + iter3 6 + iter4 14 + iter5 16 + iter6 16 + iter8 9). GET /api/admin/ops behaves exactly as specified: (a1) admin alice returns 200 with all 10 required keys in correct types and fallback_rate in [0,1]; bob/carol/dave each get 403; no-token request returns 401. (a2) counter consistency verified — snap.stream_total == metrics sentinel_stream_total both before and after; after one /api/chat/stream + one guardrail /api/chat: stream_total +1, guardrail_total +1, decisions.granted+partial +2. (a3) after one real /api/chat/stream, ttft_observations_real incremented >=1 and ttft_p95_real is in a plausible range (>0 and <60s); fallback observations didn't increase. (a4) fallback_rate math matches sf/st (or 0 when st=0); denied_to_granted_ratio matches denied/granted (or 0 when granted=0), no ZeroDivisionError.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_sentinelrag_v7.py",
+    "/app/test_reports/pytest/iter7_results.xml",
+    "/app/test_reports/pytest/iter7_full_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "metrics.snapshot() parses exposition with `raw.rsplit(' ', 1)`. This is robust for prometheus_client output but note: if any custom metric ever includes a space-bearing label value, parsing would break. Low-risk since all current label values are enumerated/ASCII.",
+    "metrics.snapshot() uses `max(counter_val, value)` when aggregating same-named counter samples. This is a safe pattern for counters (monotonic), but for the decision counter it only accumulates the single maximum value per label — this is correct because each (decision) label has exactly one sample line per scrape.",
+    "_histogram_quantile(): when the target falls exactly on the +Inf bucket, the implementation returns prev_le (i.e., the finite upper bound of the last explicit bucket). That's a reasonable choice for an SLO graph but worth knowing: extreme outliers will appear 'capped' at 20.0s. Not a bug; documented behavior.",
+    "server.py /api/admin/ops correctly reuses `require_admin(user)` — same pattern as /api/audit-logs, so RBAC is consistent. Good.",
+    "Carry-over low-priority (now tracked): POST /api/documents returned 201 on this run (verified in-suite via v3 test which accepts 200|201). Previous iter-3 concern is resolved per problem statement."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_sentinelrag_v7.py"
+  ],
+  "success_rate": {
+    "backend": "100% (89/89 cumulative, 9/9 new iter-8)",
+    "frontend": "skipped per request (testing_type=backend only)"
+  },
+  "test_credentials": "alice/admin123, bob/manager123, carol/emp123, dave/intern123. Metrics token: ops-scrape-token-3f9b1a7c2e (METRICS_TOKEN env)",
+  "seed_data_creation": "None — iter-8 uses existing seed corpus (8 docs, 4 users).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter-8 acceptance criteria green against REACT_APP_BACKEND_URL=https://secure-rag-rbac.preview.emergentagent.com. Proofs in /app/test_reports/pytest/iter7_full_results.xml. Key test patterns: (1) test_admin_alice_200_and_shape checks REQUIRED_KEYS = {ttft_p95_real, ttft_p95_fallback, ttft_observations_real/fallback, stream_total, stream_fallback_total, fallback_rate, decisions, denied_to_granted_ratio, guardrail_total} and asserts types; (2) test_ops_matches_metrics_and_deltas uses _counter_from_metrics() to regex-match name{labels} value lines from exposition and cross-checks that /api/admin/ops stream_total == /api/metrics sentinel_stream_total before and after one stream+one guardrail call with a 1.0s quiesce; (3) test_p95_real_grows_after_stream drains /api/chat/stream then asserts obs_real incremented and p95 is finite <60s; (4) test_fallback_rate_and_ratio_math and test_no_zero_division_when_granted_zero exercise the denominator-zero edge case without mutating counters. IMPORTANT for future runs: earlier test files (v3.py) use os.environ[...] without load_dotenv; export env vars via shell before pytest (`export $(grep -v '^#' /app/frontend/.env | xargs) && export $(grep -v '^#' /app/backend/.env | xargs)`) or load_dotenv in the test file. iter-8 test file uses load_dotenv so it works either way. Full 89-test suite wall-clock ≈ 160s. /api/admin/ops computes in-process so no METRICS_TOKEN needed in the request.",
+  "rca of the issue": "No backend bugs found in iter-8. One test-env gotcha: running `pytest backend/tests/` without env exports fails on v3.py collection (KeyError: REACT_APP_BACKEND_URL). Mitigation: export env vars from /app/frontend/.env and /app/backend/.env before pytest, or refactor v3.py to use load_dotenv. Test file test_sentinelrag_v7.py already does load_dotenv and is self-contained."
+}
