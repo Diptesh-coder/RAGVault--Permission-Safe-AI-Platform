@@ -25,6 +25,13 @@ Full-stack Permission-Aware AI system using Retrieval-Augmented Generation (RAG)
 6. Admin dashboard (upload, delete, view audit + users)
 7. Explainability — citations + access decision visible in UI
 
+## Iteration 5 (2026-02) — production hardening
+- **Multiproc-aware `/api/metrics`**: `render_metrics()` branches on `PROMETHEUS_MULTIPROC_DIR`; uses `multiprocess.MultiProcessCollector` for safe aggregation across uvicorn workers when set.
+- **Shared-secret on `/api/metrics`**: when `METRICS_TOKEN` env var is set, the endpoint requires `X-Metrics-Token` header (401 otherwise). Default open if env unset.
+- **TTFT histogram labels**: `sentinel_stream_first_token_seconds{path="real"|"fallback"}` so SLO graphs no longer mix code paths.
+- Smoke script now sends `X-Metrics-Token` when `SENTINEL_METRICS_TOKEN` is set.
+- Cumulative regression suite: 64/64 green.
+
 ## Iteration 4 (2026-02) — operability: smoke + Prometheus
 - **GET /api/metrics**: Prometheus exposition format. Counters `sentinel_stream_total`, `sentinel_stream_fallback_total`, `sentinel_chat_decision_total{decision}`, `sentinel_guardrail_triggered_total`; histogram `sentinel_stream_first_token_seconds`.
 - **`/app/backend/scripts/smoke_stream.py`**: stdlib-only CI-cron smoke test. Asserts first SSE chunk arrives within `SENTINEL_MAX_FIRST_TOKEN` seconds (default 6s) AND `sentinel_stream_fallback_total` did not increment during the run. Exits 0/1 deterministically. Run with `SENTINEL_BASE_URL=… python3 backend/scripts/smoke_stream.py`.
