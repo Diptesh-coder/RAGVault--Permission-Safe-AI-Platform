@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import List
 
 from fastapi import FastAPI, APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -33,6 +33,7 @@ import rag
 import guardrails
 import llm_service
 import seed as seed_module
+import metrics
 
 # ── DB ─────────────────────────────────────────────────────────────────────────
 mongo_url = os.environ["MONGO_URL"]
@@ -143,12 +144,21 @@ async def _write_audit(user: UserPublic, query: str, state: dict, answer: str | 
     payload = log.model_dump()
     payload["timestamp"] = payload["timestamp"].isoformat()
     await db.audit_logs.insert_one(payload)
+    metrics.chat_decision_total.labels(decision=state["decision"]).inc()
+    if state["triggered"]:
+        metrics.guardrail_triggered_total.inc()
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
 @api_router.get("/")
 async def root():
     return {"service": "SentinelRAG", "status": "ok"}
+
+
+@api_router.get("/metrics")
+async def prom_metrics():
+    body, content_type = metrics.render_metrics()
+    return Response(content=body, media_type=content_type)
 
 
 @api_router.post("/auth/login", response_model=LoginResponse)

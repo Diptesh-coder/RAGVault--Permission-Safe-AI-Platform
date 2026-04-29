@@ -1,5 +1,10 @@
-"""Claude Sonnet 4.5 integration with TRUE streaming via litellm + Emergent proxy."""
+"""Claude Sonnet 4.5 integration with TRUE streaming via litellm + Emergent proxy.
+
+Emits Prometheus metrics on entry, fallback, and time-to-first-token so prod
+ops can alert on silent regressions.
+"""
 import os
+import time
 import asyncio
 import logging
 from typing import AsyncGenerator, List, Dict
@@ -7,6 +12,8 @@ from typing import AsyncGenerator, List, Dict
 import litellm
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 from emergentintegrations.llm.utils import get_app_identifier, get_integration_proxy_url
+
+import metrics
 
 logger = logging.getLogger("sentinel_rag.llm")
 
@@ -51,7 +58,6 @@ async def generate_answer(query: str, context_docs: list, session_id: str) -> st
 
 # ── True streaming via the Emergent litellm proxy ─────────────────────────────
 def _build_litellm_params(messages: List[Dict]) -> Dict:
-    """Mirror emergentintegrations._execute_completion() but for streaming."""
     proxy_url = get_integration_proxy_url()
     headers = {}
     app_id = get_app_identifier()
@@ -62,7 +68,7 @@ def _build_litellm_params(messages: List[Dict]) -> Dict:
         "messages": messages,
         "api_key": EMERGENT_LLM_KEY,
         "api_base": proxy_url + "/llm",
-        "custom_llm_provider": "openai",  # Emergent proxy speaks OpenAI shape
+        "custom_llm_provider": "openai",
         "stream": True,
         "extra_headers": headers,
     }
@@ -71,11 +77,11 @@ def _build_litellm_params(messages: List[Dict]) -> Dict:
 async def stream_answer(
     query: str, context_docs: list, session_id: str
 ) -> AsyncGenerator[str, None]:
-    """Yield real Claude tokens as they arrive from the streaming endpoint.
+    """Yield real Claude tokens. Falls back to pseudo-stream on error."""
+    metrics.stream_total.inc()
+    start = time.perf_counter()
+    first_seen = False
 
-    Falls back to pseudo-streaming (full response → word chunks) only if the
-    streaming call raises, so callers always receive content.
-    """
     messages = [
         {"role": "system", "content": SYSTEM_MESSAGE},
         {"role": "user", "content": _build_prompt(query, context_docs)},
@@ -91,11 +97,23 @@ async def stream_answer(
             except Exception:
                 content = ""
             if content:
+                if not first_seen:
+                    metrics.stream_first_token_seconds.observe(time.perf_counter() - start)
+                    first_seen = True
                 yield content
+        if not first_seen:
+            # No content was ever produced — treat as a failure and fall back.
+            raise RuntimeError("real stream produced zero content chunks")
+        return
     except Exception as e:
-        logger.warning(f"True streaming failed, falling back: {e}")
-        full = await generate_answer(query, context_docs, session_id)
-        import re
-        for tok in re.findall(r"\S+\s*", full) or [full]:
-            yield tok
-            await asyncio.sleep(0.018)
+        logger.warning(f"True streaming failed, falling back to pseudo-stream: {e}")
+        metrics.stream_fallback_total.inc()
+
+    # Fallback path
+    full = await generate_answer(query, context_docs, session_id)
+    if not first_seen:
+        metrics.stream_first_token_seconds.observe(time.perf_counter() - start)
+    import re
+    for tok in re.findall(r"\S+\s*", full) or [full]:
+        yield tok
+        await asyncio.sleep(0.018)

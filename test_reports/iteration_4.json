@@ -1,0 +1,35 @@
+{
+  "summary": "Iteration 4 of SentinelRAG fully validated. 14/14 new iter-4 backend pytest tests passed (4 regression + 3 metrics-endpoint + 4 counter-increment + 1 fallback-stays-zero + 2 smoke-script). Full regression suite green at 48/48 (iter1 17 + iter2 11 + iter3 6 + iter4 14). GET /api/metrics returns 200 text/plain Prometheus exposition with all required series; counters increment correctly on /api/chat and /api/chat/stream; guardrail counter increments on SSN query; first-token histogram count >= 1 after stream; fallback counter remained 0 across multiple stream calls; smoke_stream.py exits 0 within budget and exits 1 with 0.1s tight budget.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_sentinelrag_v4.py",
+    "/app/test_reports/pytest/iter4_results.xml",
+    "/app/test_reports/pytest/iter4_full_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "metrics.py: render_metrics() returns generate_latest() which serializes the *global* prometheus_client REGISTRY. In a multi-worker uvicorn/gunicorn deployment this means each worker reports its own counters and Prometheus will see jittery values per scrape unless multiprocess mode is configured (PROMETHEUS_MULTIPROC_DIR). For the current single-process supervisor setup this is fine, but it is a deployment-shape footgun worth documenting.",
+    "smoke_stream.py uses urllib.request.urlopen with default global state; if SENTINEL_BASE_URL is http (not https) and behind a redirector, urlopen will follow the redirect transparently — generally fine, but the timing measurement starts at t0 *before* the first /api/chat/stream POST is sent, which means TCP/TLS handshake time is lumped into the first-token budget. The 6s default has plenty of headroom, but the 0.1s adversarial test could in theory fail for the wrong reason on a slow link. Acceptable in practice.",
+    "metrics endpoint is unauthenticated by design (ops convention), but it is also un-rate-limited and exposed on the public ingress. In production this is usually scraped over an internal network only — recommend an ingress/CDN allowlist or a simple shared-secret header for /api/metrics.",
+    "stream_first_token_seconds histogram is observed inside the fallback path even when fallback was triggered (line 115 of llm_service.py). That means the histogram mixes 'real-stream first token' and 'fallback first emit'. For a TTFT SLO graph these should ideally be separate series (e.g., a `path` label). Not blocking, but worth noting.",
+    "Carry-over from iter3: server.py POST /api/documents still returns 200 instead of 201."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_sentinelrag_v4.py"
+  ],
+  "success_rate": {"backend": "100% (48/48 full suite, 14/14 new iter-4)", "frontend": "skipped per request"},
+  "test_credentials": "alice/admin123, bob/manager123, carol/emp123, dave/intern123",
+  "seed_data_creation": "None. iter-4 uses only existing seed corpus.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter-4 acceptance criteria all green on public REACT_APP_BACKEND_URL. Concrete proofs: (a) GET /api/metrics: status 200, content-type 'text/plain; version=0.0.4; charset=utf-8', body contains sample lines for sentinel_stream_total, sentinel_stream_fallback_total, sentinel_stream_first_token_seconds_bucket, sentinel_chat_decision_total{decision=\"...\"}, sentinel_guardrail_triggered_total. (b) Δ(stream_total) == +1 after one /api/chat/stream call; Δ(chat_decision_total{granted}) == +1 after one /api/chat call; Δ(guardrail_triggered_total) == +1 after one query containing 'SSN'. (c) sentinel_stream_first_token_seconds_count >= 1 after a stream call (real-stream path observed first token). (d) After 3 consecutive /api/chat/stream calls under normal operation, sentinel_stream_fallback_total stayed unchanged (delta == 0), confirming the real-stream path is healthy via the litellm + Emergent proxy. (e) smoke_stream.py executed via subprocess with SENTINEL_BASE_URL=REACT_APP_BACKEND_URL exits 0 and prints PASS within ~3s; rerun with SENTINEL_MAX_FIRST_TOKEN=0.1 exits 1 with FAIL and the budget message. The script's baseline-vs-post-run fallback delta read is also exercised (both 'baseline sentinel_stream_fallback_total' and 'post-run sentinel_stream_fallback_total' lines appear). RBAC regression: dave 3 docs / alice 8 docs intact; intern dave CEO chat answer contains zero leak strings (4.8M/1.2M/2.1M/1.5M/'performance bonus'). Note for next agent: existing iter1-3 test files require REACT_APP_BACKEND_URL to be exported in the shell env; iter-4 file uses dotenv to load /app/frontend/.env automatically so it works standalone. The full suite of 48 tests completes in ~85s.",
+  "rca of the issue": "N/A — no failures."
+}
