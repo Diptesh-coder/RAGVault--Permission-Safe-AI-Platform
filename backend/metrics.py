@@ -24,12 +24,35 @@ stream_fallback_total = Counter(
 )
 
 # Time-to-first-token, labeled by code path so SLO graphs do not mix the two.
+# Cardinality guardrail: `path` is fixed to the values in VALID_STREAM_PATHS so
+# a stray developer can't blow up the series count by inventing new labels.
+VALID_STREAM_PATHS = ("real", "fallback")
+
 stream_first_token_seconds = Histogram(
     "sentinel_stream_first_token_seconds",
     "Wall-clock seconds from stream_answer entry to the first emitted chunk",
     labelnames=("path",),
     buckets=(0.25, 0.5, 1.0, 2.0, 4.0, 6.0, 10.0, 20.0, 60.0),
 )
+
+
+def observe_first_token(path: str, value: float) -> None:
+    """Record a TTFT sample under one of the enumerated `path` labels.
+
+    Raises ValueError on unknown paths so cardinality stays bounded at exactly
+    len(VALID_STREAM_PATHS) child series. Pre-create the children at import
+    time so the labelled bucket lines always appear in the exposition.
+    """
+    if path not in VALID_STREAM_PATHS:
+        raise ValueError(
+            f"unknown stream path label '{path}'; expected one of {VALID_STREAM_PATHS}"
+        )
+    stream_first_token_seconds.labels(path=path).observe(value)
+
+
+# Pre-create the bounded child series so cardinality is locked at module load.
+for _p in VALID_STREAM_PATHS:
+    stream_first_token_seconds.labels(path=_p)
 
 # RBAC pre-filter — count denied/partial decisions so security ops can graph them
 chat_decision_total = Counter(

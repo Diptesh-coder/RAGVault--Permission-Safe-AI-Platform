@@ -53,7 +53,18 @@ def _read_metric(name: str) -> float:
     try:
         with _http("GET", "/api/metrics", headers=headers) as r:
             text = r.read().decode()
-    except urllib.error.URLError:
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            print(
+                f"[smoke] WARN — /api/metrics returned 401 for metric '{name}'. "
+                "Set SENTINEL_METRICS_TOKEN to match the backend METRICS_TOKEN; "
+                "using soft fallback (0.0)."
+            )
+        else:
+            print(f"[smoke] WARN — /api/metrics HTTP {e.code} for metric '{name}'; soft fallback (0.0).")
+        return 0.0
+    except urllib.error.URLError as e:
+        print(f"[smoke] WARN — /api/metrics unreachable ({e}); soft fallback (0.0).")
         return 0.0
     for line in text.splitlines():
         if line.startswith("#"):

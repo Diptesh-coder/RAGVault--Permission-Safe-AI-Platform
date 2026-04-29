@@ -1,0 +1,38 @@
+{
+  "summary": "Iter-6 SentinelRAG hardening polish verified. 16/16 new iter-6 backend pytest tests pass; full cumulative regression 80/80 green (iter1 17 + iter2 11 + iter3 6 + iter4 14 + iter5 16 + iter6 16). All three new polish items work exactly as specified: (a) /api/metrics uses hmac.compare_digest() — still 401 on no header / wrong token / same-length wrong token / empty header, 200 on correct token ops-scrape-token-3f9b1a7c2e; server remains healthy after a volley of bad-token requests. (b) smoke_stream.py _read_metric: when SENTINEL_METRICS_TOKEN is absent against the token-protected backend, stdout contains '[smoke] WARN' + 'returned 401' and the script still exits 0 and prints '[smoke] PASS'; when SENTINEL_METRICS_TOKEN matches, no WARN line appears and the script exits 0. (c) metrics.observe_first_token('hacked', 0.5) raises ValueError with message containing 'unknown stream path label'; metrics.observe_first_token('real', …) and ('fallback', …) succeed; /api/metrics exposition already contains both sentinel_stream_first_token_seconds_count{path=\"real\"} and _count{path=\"fallback\"} samples because the two child series are pre-instantiated at module load. After one /api/chat/stream call, path=\"real\" count increments by >=1 while path=\"fallback\" stays unchanged.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_sentinelrag_v6.py",
+    "/app/test_reports/pytest/iter6_results.xml",
+    "/app/test_reports/pytest/iter6_full_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py /api/metrics now uses hmac.compare_digest(provided or '', expected) — correct constant-time comparison. Note compare_digest raises TypeError only on non-str/non-bytes inputs; `request.headers.get(...)` always returns str|None and the `or ''` defaults None to empty string, so crash-safety is sound.",
+    "metrics.py observe_first_token() is a clean cardinality guard. The 'pre-instantiate child series at import' pattern via `stream_first_token_seconds.labels(path=_p)` is idempotent and safe for reimports under subprocess (the tests exercise this).",
+    "smoke_stream.py: splitting urllib.error.HTTPError from urllib.error.URLError is a good diagnostic improvement — the 401 WARN line now includes a concrete remediation hint ('Set SENTINEL_METRICS_TOKEN to match the backend METRICS_TOKEN').",
+    "Carry-over from iter3 (unfixed, low priority): server.py POST /api/documents still returns 200 instead of 201 on create. Not blocking but worth a follow-up.",
+    "Observation: iter-5 and iter-6 both rely on calling /api/chat/stream inside the test to materialize the path=\"real\" histogram samples. With iter-6's pre-instantiation, the _count{path=\"real\"} line is present on a cold start at 0.0, but bucket-sample lines only appear once at least one observation has occurred — this matches prometheus_client's standard histogram emission and is fine."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_sentinelrag_v6.py"
+  ],
+  "success_rate": {
+    "backend": "100% (80/80 cumulative, 16/16 new iter-6)",
+    "frontend": "skipped per request (testing_type=backend only)"
+  },
+  "test_credentials": "alice/admin123, bob/manager123, carol/emp123, dave/intern123. Metrics token: ops-scrape-token-3f9b1a7c2e (METRICS_TOKEN env)",
+  "seed_data_creation": "None — iter-6 uses the existing seed corpus (8 docs, 4 users).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter-6 acceptance criteria all green against public REACT_APP_BACKEND_URL (https://secure-rag-rbac.preview.emergentagent.com). Concrete proofs saved in /app/test_reports/pytest/iter6_full_results.xml: (1) TestMetricsTokenHmac: 401 returned for no-header / 'wrong-token-value' / same-length bogus ('a'*26) / empty-string header; 200 returned with X-Metrics-Token: ops-scrape-token-3f9b1a7c2e and body contains 'sentinel_stream_total'. (2) TestCardinalityLock::test_observe_first_token_unknown_path_raises runs metrics.observe_first_token('hacked', 0.5) via subprocess — captures 'RAISED:unknown stream path label ...' on stdout. (3) TestCardinalityLock::test_both_child_series_present_in_exposition regex-matches BOTH `^sentinel_stream_first_token_seconds_count\\{[^}]*path=\"real\"[^}]*\\}\\s+...$` and the path=\"fallback\" equivalent on a scrape with no prior traffic intervention. (4) TestCardinalityLock::test_stream_increments_real_not_fallback verifies real increments by >=1 and fallback stays equal after one /api/chat/stream. (5) TestSmokeStreamWarnOn401 runs /app/backend/scripts/smoke_stream.py as a subprocess twice — once without SENTINEL_METRICS_TOKEN (asserts '[smoke] WARN' + 'returned 401' + '[smoke] PASS' + exit 0), once with it (asserts no WARN + PASS + exit 0). Full 80-test suite wall-clock ≈ 154s on the preview cluster. All previous iter1-5 files remain green unchanged — no patches needed in iter-6. IMPORTANT test env: test_sentinelrag_v6.py calls dotenv on both /app/backend/.env and /app/frontend/.env so METRICS_TOKEN and REACT_APP_BACKEND_URL are both visible regardless of shell env export.",
+  "rca of the issue": "One self-inflicted test-script bug during iter-6 authoring: the initial TestCardinalityLock::test_observe_first_token_unknown_path_raises packed a `try:/except:` block into a `python -c '...; ...'` one-liner which is invalid Python (compound statements can't live after `;`). Subprocess exited 1, pytest surfaced a subprocess.CalledProcessError. Mitigation: rewrote the inlined code as a proper multi-line script string. No backend code changed. All 16 iter-6 tests green after the test-script fix."
+}

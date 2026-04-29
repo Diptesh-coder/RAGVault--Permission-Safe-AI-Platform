@@ -6,6 +6,7 @@ Pipeline:
 import os
 import json
 import uuid
+import hmac
 import logging
 from pathlib import Path
 from datetime import datetime, timezone
@@ -166,8 +167,9 @@ async def prom_metrics(request: Request):
     """
     expected = os.environ.get("METRICS_TOKEN")
     if expected:
-        provided = request.headers.get("X-Metrics-Token")
-        if provided != expected:
+        provided = request.headers.get("X-Metrics-Token") or ""
+        # Constant-time comparison defeats timing side-channels.
+        if not hmac.compare_digest(provided, expected):
             raise HTTPException(status_code=401, detail="metrics: invalid or missing token")
     body, content_type = metrics.render_metrics()
     return Response(content=body, media_type=content_type)
