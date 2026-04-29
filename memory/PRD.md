@@ -25,6 +25,12 @@ Full-stack Permission-Aware AI system using Retrieval-Augmented Generation (RAG)
 6. Admin dashboard (upload, delete, view audit + users)
 7. Explainability — citations + access decision visible in UI
 
+## Iteration 2 (2026-02) — production-grade upgrades
+- Word-boundary regex guardrails (`\b…\b`) eliminate false positives like `ssn` ⊂ `lessons`
+- ChromaDB persistent vector store with overlapping chunking; RBAC+ABAC enforced as a `where` clause at the chunk level (row-level security at the DB layer)
+- SSE streaming endpoint `POST /api/chat/stream` (`meta` → `token×N` → `done`); frontend has Streaming/Batch toggle with animated cursor
+- Verified by 28/28 backend tests + 10/10 Playwright frontend flows
+
 ## Implemented (2026-02)
 - Backend modules: `auth.py`, `rbac.py`, `rag.py`, `guardrails.py`, `llm_service.py`, `seed.py`, `models.py`, `server.py`
 - REST API: `/api/auth/login`, `/api/auth/me`, `/api/chat`, `/api/documents` (GET/POST), `/api/documents/all`, `/api/documents/{id}` (DELETE), `/api/audit-logs`, `/api/users`
