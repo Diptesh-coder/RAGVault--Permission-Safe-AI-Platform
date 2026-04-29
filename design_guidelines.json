@@ -1,0 +1,110 @@
+{
+  "theme": "Light",
+  "archetype": "Swiss & High-Contrast (Archetype 4)",
+  "concept": "The Objective Authority. A highly secure, functional, and transparent enterprise security dashboard. UI is brutally honest, prioritizing clarity, text contrast, and rigid grid layouts over decorative elements.",
+  "colors": {
+    "background": "#FAFAFA",
+    "foreground": "#0A0A0A",
+    "card": "#FFFFFF",
+    "card_foreground": "#0A0A0A",
+    "primary": "#002FA7",
+    "primary_foreground": "#FFFFFF",
+    "secondary": "#E5E5E5",
+    "secondary_foreground": "#0A0A0A",
+    "muted": "#F5F5F5",
+    "muted_foreground": "#737373",
+    "accent": "#F0F0F0",
+    "accent_foreground": "#0A0A0A",
+    "destructive": "#FF3B30",
+    "destructive_foreground": "#FFFFFF",
+    "warning": "#FFCC00",
+    "warning_foreground": "#000000",
+    "border": "#E5E5E5",
+    "input": "#E5E5E5",
+    "ring": "#002FA7"
+  },
+  "typography": {
+    "font_families": {
+      "headings": "'Cabinet Grotesk', sans-serif",
+      "body": "'IBM Plex Sans', sans-serif",
+      "mono": "'IBM Plex Mono', monospace"
+    },
+    "scale": {
+      "h1": "text-4xl tracking-tighter font-bold",
+      "h2": "text-2xl tracking-tight font-semibold",
+      "h3": "text-xl tracking-tight font-medium",
+      "body": "text-base leading-relaxed",
+      "small": "text-sm",
+      "micro": "text-xs uppercase tracking-[0.2em] font-mono"
+    },
+    "rules": "Avoid center alignment for dense data. Use Mono font for all metadata (roles, timestamps, document IDs, access logs) to enforce the 'Control Room' technical feel."
+  },
+  "layout_and_spacing": {
+    "philosophy": "Strict 'Control Room' grid hierarchy. Density over whitespace for data, but generous padding (p-6, p-8) inside major containers.",
+    "page_layout": "Top navigation bar (sticky, z-50, solid white bg, border-b). Main content below. Admin views use a dense sidebar or sub-navigation tabs.",
+    "dashboard_grid": "grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6. Every pixel must be utilized. Use h-full on children.",
+    "surface_strategy": "Grid Borders: Expose the skeleton. Container uses border-collapse style layout, items use subtle borders. No heavy drop shadows. Use 1px solid borders to define edges."
+  },
+  "component_strategies": {
+    "buttons": "Minimal border radius (rounded-sm or rounded-none). High contrast. Primary uses International Klein Blue (#002FA7). Destructive uses Signal Red (#FF3B30).",
+    "cards": "Flat background, 1px subtle border (border-border), no shadow. Hover: Slight lift (-translate-y-1), border color darkens.",
+    "badges_and_chips": "MANDATORY for Roles (Admin, Manager, Employee, Intern), Departments, and Sensitivity levels. Use solid sharp rectangles. Font MUST be Mono, tiny, uppercase.",
+    "forms_and_inputs": "Shadcn standard inputs. Focus state must be a sharp 2px ring of Primary color. No soft glows.",
+    "tables": "Shadcn Table. Highly dense. Use monospaced font for timestamps and IDs. Ensure row hover state is distinctly tinted (e.g., bg-muted/50).",
+    "modals_and_dialogs": "Flat solid background. Never use glassmorphism for a security app (it feels too 'consumer'). Hard edges, stark contrast."
+  },
+  "feature_specific_guidelines": {
+    "login_page": {
+      "layout": "Split screen (50/50). Left: Stark white login form. Right: Architectural minimal image overlay.",
+      "demo_accounts": "Provide 4 quick-login buttons for the demo roles (Admin, Manager, Employee, Intern) above or below the standard form to eliminate friction.",
+      "security_branding": "Add a prominent 'SOC2 Compliant' or 'Enterprise Grade' visual trust signal near the form."
+    },
+    "chat_interface": {
+      "layout": "Center chat feed, right-aligned Explainability Side Panel (width: 30-40%).",
+      "messages": "User: Right-aligned, primary blue bubble. AI: Left-aligned, muted grey bubble.",
+      "citations": "Cited docs must appear as inline clickable Monospace pills within the AI response. Clicking highlights the doc in the side panel.",
+      "guardrails": "If a query triggers a security guardrail, render a full-width Warning (Yellow) or Destructive (Red) banner inside the chat feed immediately before the AI response."
+    },
+    "documents_library": {
+      "layout": "Data table or dense bento list.",
+      "metadata": "Columns MUST include: Document Name, Uploader, Department, Target Role, Sensitivity Level (Low, Medium, High).",
+      "actions": "Upload Document button (Admin only) opens a strict, wizard-like Shadcn Dialog form."
+    },
+    "audit_logs": {
+      "layout": "Full width data table.",
+      "columns": "Timestamp (Mono), User (Badge), Query Snippet, Result (Access Granted / Access Denied).",
+      "visuals": "Access Denied rows should have a subtle red background tint (bg-red-50) and a red 'Denied' badge."
+    },
+    "access_denied_states": {
+      "messaging": "Clinical and objective. 'Error 403: Security Policy Violation.' or 'Insufficient Clearance.'",
+      "visuals": "Stark red thin border, minimal icon (Lucide ShieldAlert or EyeOff). No playful illustrations."
+    }
+  },
+  "motion_and_interactions": {
+    "philosophy": "Minimalist and objective. No bouncing, no spring animations.",
+    "hover": "Explicit text color changes. Border darkening.",
+    "transitions": "transition-colors duration-200 ease-in-out."
+  },
+  "media": {
+    "login_background": {
+      "url": "https://images.unsplash.com/photo-1610496571096-8367bdbbae2b?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzNzl8MHwxfHNlYXJjaHwyfHxtaW5pbWFsaXN0JTIwYWJzdHJhY3QlMjB3aGl0ZSUyMGFyY2hpdGVjdHVyZXxlbnwwfHx8fDE3Nzc1MDE0NTV8MA&ixlib=rb-4.1.0&q=85",
+      "category": "hero",
+      "description": "Black and white concrete abstract building architecture. Use as right-side full-bleed image on the login page to convey structure and security."
+    }
+  },
+  "icons": {
+    "library": "lucide-react",
+    "guidance": "Use technical, strict icons: Shield, ShieldAlert, Lock, Unlock, EyeOff, FileText, Fingerprint, Terminal, UserCog."
+  },
+  "accessibility_and_testing": {
+    "contrast": "All text must pass WCAG AA (4.5:1).",
+    "data_testid_rules": "CRITICAL: All interactive elements MUST include a data-testid attribute in kebab-case. Examples: data-testid='login-btn-admin', data-testid='chat-input-field', data-testid='upload-doc-submit', data-testid='audit-log-row'."
+  },
+  "instructions_to_main_agent": [
+    "Use standard Tailwind CSS classes mapping to the hex colors defined here.",
+    "Do NOT use generic standard fonts (Inter, Roboto). Apply the specified fonts via Google Fonts.",
+    "Shadcn components MUST be used for Tabs, Tables, Dialogs, Selects, and Inputs.",
+    "Ensure the application strictly enforces the RBAC logic visually by hiding admin tabs for non-admin roles.",
+    "In the chat, the Explainability panel must clearly list which documents were queried and show the user's matching attributes."
+  ]
+}
