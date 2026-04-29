@@ -25,6 +25,12 @@ Full-stack Permission-Aware AI system using Retrieval-Augmented Generation (RAG)
 6. Admin dashboard (upload, delete, view audit + users)
 7. Explainability — citations + access decision visible in UI
 
+## Iteration 6 (2026-02) — hardening polish
+- `/api/metrics` token comparison now uses `hmac.compare_digest()` — defeats timing side-channel attacks on the shared secret.
+- `smoke_stream._read_metric` distinguishes `HTTPError` (401 etc.) from `URLError` and prints a clear `[smoke] WARN` line with a remediation hint (`Set SENTINEL_METRICS_TOKEN to match the backend METRICS_TOKEN`), then continues with the soft-fallback to 0.0.
+- New `metrics.observe_first_token(path, value)` helper raises `ValueError` on unknown labels; both `path="real"` and `path="fallback"` child series are pre-instantiated at module load so cardinality is locked at exactly 2.
+- Cumulative regression: 80/80 green.
+
 ## Iteration 5 (2026-02) — production hardening
 - **Multiproc-aware `/api/metrics`**: `render_metrics()` branches on `PROMETHEUS_MULTIPROC_DIR`; uses `multiprocess.MultiProcessCollector` for safe aggregation across uvicorn workers when set.
 - **Shared-secret on `/api/metrics`**: when `METRICS_TOKEN` env var is set, the endpoint requires `X-Metrics-Token` header (401 otherwise). Default open if env unset.
