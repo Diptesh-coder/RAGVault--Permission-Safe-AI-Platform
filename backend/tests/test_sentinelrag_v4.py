@@ -20,8 +20,11 @@ import requests
 from dotenv import load_dotenv
 
 load_dotenv("/app/frontend/.env")
+load_dotenv("/app/backend/.env", override=False)
 BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
 API = f"{BASE_URL}/api"
+METRICS_TOKEN = os.environ.get("METRICS_TOKEN")
+METRICS_HEADERS = {"X-Metrics-Token": METRICS_TOKEN} if METRICS_TOKEN else {}
 
 LEAK_TERMS = ["4.8M", "1.2M", "2.1M", "1.5M", "performance bonus",
               "4,800,000", "1,200,000", "2,100,000", "1,500,000"]
@@ -37,7 +40,7 @@ def _login(username: str, password: str) -> str:
 
 def _read_metric(name: str, label_match: str | None = None) -> float:
     """Read a Prometheus counter/histogram_count value. Optionally match a label substring."""
-    r = requests.get(f"{API}/metrics", timeout=15)
+    r = requests.get(f"{API}/metrics", headers=METRICS_HEADERS, timeout=15)
     assert r.status_code == 200
     for line in r.text.splitlines():
         if line.startswith("#") or not line.strip():
@@ -101,16 +104,32 @@ class TestRegression:
 # ── NEW: /api/metrics exposition ───────────────────────────────────────────────
 class TestMetricsEndpoint:
     def test_metrics_no_auth_required(self):
-        r = requests.get(f"{API}/metrics", timeout=15)
+        # iter-5: METRICS_TOKEN is set, so endpoint now REQUIRES the header.
+        # Send the header to verify happy-path returns 200.
+        r = requests.get(f"{API}/metrics", headers=METRICS_HEADERS, timeout=15)
         assert r.status_code == 200, f"got {r.status_code}: {r.text[:200]}"
 
     def test_metrics_content_type_text_plain(self):
-        r = requests.get(f"{API}/metrics", timeout=15)
+        r = requests.get(f"{API}/metrics", headers=METRICS_HEADERS, timeout=15)
         ct = r.headers.get("content-type", "")
         assert ct.lower().startswith("text/plain"), f"wrong content-type: {ct}"
 
-    def test_metrics_contains_required_series(self):
-        r = requests.get(f"{API}/metrics", timeout=15)
+    def test_metrics_contains_required_series(self, alice_token):
+        # iter-5: histogram now has label `path`, so buckets only appear
+        # after an observe(). Trigger one stream first so the body contains
+        # `sentinel_stream_first_token_seconds_bucket{...,path="real"}`.
+        rs = requests.post(
+            f"{API}/chat/stream",
+            headers={"Authorization": f"Bearer {alice_token}",
+                     "Content-Type": "application/json"},
+            data=json.dumps({"query": "warm-up"}),
+            stream=True, timeout=90,
+        )
+        for _ in rs.iter_lines():
+            pass
+        rs.close()
+
+        r = requests.get(f"{API}/metrics", headers=METRICS_HEADERS, timeout=15)
         body = r.text
         required = [
             "sentinel_stream_total",
@@ -226,6 +245,8 @@ class TestSmokeScript:
         env["SENTINEL_BASE_URL"] = BASE_URL
         env["SENTINEL_USER"] = "alice"
         env["SENTINEL_PASS"] = "admin123"
+        if METRICS_TOKEN:
+            env["SENTINEL_METRICS_TOKEN"] = METRICS_TOKEN
         env.update(env_overrides)
         return subprocess.run(
             [sys.executable, self.SCRIPT],

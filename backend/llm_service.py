@@ -98,7 +98,9 @@ async def stream_answer(
                 content = ""
             if content:
                 if not first_seen:
-                    metrics.stream_first_token_seconds.observe(time.perf_counter() - start)
+                    metrics.stream_first_token_seconds.labels(path="real").observe(
+                        time.perf_counter() - start
+                    )
                     first_seen = True
                 yield content
         if not first_seen:
@@ -111,8 +113,9 @@ async def stream_answer(
 
     # Fallback path
     full = await generate_answer(query, context_docs, session_id)
-    if not first_seen:
-        metrics.stream_first_token_seconds.observe(time.perf_counter() - start)
+    metrics.stream_first_token_seconds.labels(path="fallback").observe(
+        time.perf_counter() - start
+    )
     import re
     for tok in re.findall(r"\S+\s*", full) or [full]:
         yield tok

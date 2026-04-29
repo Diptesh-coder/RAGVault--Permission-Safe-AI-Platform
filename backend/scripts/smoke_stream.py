@@ -46,8 +46,12 @@ def _login() -> str:
 
 
 def _read_metric(name: str) -> float:
+    headers = {}
+    metrics_token = os.environ.get("SENTINEL_METRICS_TOKEN")
+    if metrics_token:
+        headers["X-Metrics-Token"] = metrics_token
     try:
-        with _http("GET", "/api/metrics") as r:
+        with _http("GET", "/api/metrics", headers=headers) as r:
             text = r.read().decode()
     except urllib.error.URLError:
         return 0.0

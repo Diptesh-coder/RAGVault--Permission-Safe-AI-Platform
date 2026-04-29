@@ -11,7 +11,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import List
 
-from fastapi import FastAPI, APIRouter, Depends, HTTPException
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse, Response
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -156,7 +156,19 @@ async def root():
 
 
 @api_router.get("/metrics")
-async def prom_metrics():
+async def prom_metrics(request: Request):
+    """Prometheus exposition endpoint.
+
+    If `METRICS_TOKEN` is set in the environment, the caller must present a
+    matching `X-Metrics-Token` header. If unset, the endpoint is open (default
+    for local dev; in production set the env var via your secret manager and
+    configure your Prometheus scrape config to send the header).
+    """
+    expected = os.environ.get("METRICS_TOKEN")
+    if expected:
+        provided = request.headers.get("X-Metrics-Token")
+        if provided != expected:
+            raise HTTPException(status_code=401, detail="metrics: invalid or missing token")
     body, content_type = metrics.render_metrics()
     return Response(content=body, media_type=content_type)
 

@@ -1,0 +1,41 @@
+{
+  "summary": "Iter-5 SentinelRAG production-hardening verified. 16/16 new iter-5 backend pytest tests pass. Full cumulative regression suite 64/64 green (iter1 17 + iter2 11 + iter3 6 + iter4 14 + iter5 16). All three iter-5 changes work as designed: (a) PROMETHEUS_MULTIPROC_DIR aware render_metrics() returns non-empty bytes both with and without the env var (subprocess-isolated import); (b) /api/metrics enforces X-Metrics-Token shared-secret — returns 401 without header, 401 with wrong header, 200 with correct header (ops-scrape-token-3f9b1a7c2e); (c) sentinel_stream_first_token_seconds histogram correctly carries the path label and a real /api/chat/stream call produces sample lines `sentinel_stream_first_token_seconds_bucket{...,path=\"real\"}` and `_count{path=\"real\"} >= 1`. Smoke script passes with SENTINEL_METRICS_TOKEN set; without it the soft-fallback (returns 0.0 on 401) keeps the script green for the increment-delta check. Counter increment regressions hold for stream_total, chat_decision_total{granted}, guardrail_triggered_total when read via the authenticated metrics endpoint. RBAC + intern-CEO no-leak + 4-role login regressions all pass.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_sentinelrag_v5.py",
+    "/app/backend/tests/test_sentinelrag_v4.py",
+    "/app/test_reports/pytest/iter5_results.xml",
+    "/app/test_reports/pytest/iter5_full_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "metrics.py: render_metrics() correctly branches on PROMETHEUS_MULTIPROC_DIR. One subtle point — when multiproc mode is active but no worker has emitted samples yet, the body is bytes of length 0 (no series). Prometheus scrapers tolerate this, but for clearer diagnostics consider always emitting the HELP/TYPE banners.",
+    "server.py /api/metrics token check uses a non-constant-time string comparison (`provided != expected`). For an ops-internal endpoint this is acceptable, but `hmac.compare_digest(provided or '', expected)` would defeat any timing-side-channel attempt to brute-force the shared secret.",
+    "smoke_stream.py: when the metrics endpoint returns 401 (token missing), `_read_metric` swallows the URLError and returns 0.0. That is the desired soft-fallback behaviour, but it also masks any 401 from a misconfigured token in production. Suggest logging a one-liner like `[smoke] WARN — /api/metrics returned 401, using soft fallback` so an operator notices.",
+    "metrics.py top-level instantiates Counters/Histograms against the global REGISTRY, which means the module is not safely re-importable in the same process (importlib.reload raises 'Duplicated timeseries'). Tests that need to exercise the multiproc branch should use a subprocess (this iteration's test_sentinelrag_v5 does exactly that).",
+    "Carry-over from iter4: histogram now correctly labelled by path; consider adding a `bucket={...}` cardinality budget alarm in the dashboard since the new label doubles the series count.",
+    "Carry-over from iter3: server.py POST /api/documents still returns 200 instead of 201."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_sentinelrag_v4.py",
+    "/app/backend/tests/test_sentinelrag_v5.py"
+  ],
+  "success_rate": {
+    "backend": "100% (64/64 cumulative, 16/16 new iter-5)",
+    "frontend": "skipped per request"
+  },
+  "test_credentials": "alice/admin123, bob/manager123, carol/emp123, dave/intern123. Metrics token: ops-scrape-token-3f9b1a7c2e (METRICS_TOKEN env)",
+  "seed_data_creation": "None — iter-5 uses the existing seed corpus (8 docs, 4 users).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter-5 acceptance criteria all green on public REACT_APP_BACKEND_URL. Concrete proofs: (1) GET /api/metrics → 401 with no header, 401 with wrong header, 200 with X-Metrics-Token: ops-scrape-token-3f9b1a7c2e; content-type 'text/plain; version=0.0.4; charset=utf-8'. (2) After one /api/chat/stream call, body contains a regex match for `^sentinel_stream_first_token_seconds_bucket\\{[^}]*path=\"real\"[^}]*\\}\\s+[0-9.eE+-]+$` and `sentinel_stream_first_token_seconds_count{path=\"real\"} >= 1`; the fallback variant remains 0. (3) /app/backend/scripts/smoke_stream.py sends X-Metrics-Token when SENTINEL_METRICS_TOKEN is set; with it set the script's _read_metric returns real values; without it, _read_metric returns 0.0 (soft fallback), and the script still exits 0 as long as the streaming path itself is healthy. (4) Multiproc render_metrics() exercised via subprocess: with PROMETHEUS_MULTIPROC_DIR unset → body contains sentinel_stream_total etc.; with PROMETHEUS_MULTIPROC_DIR set to a temp dir → call succeeds, returns bytes with text/plain content-type (body may be empty of samples since no worker has written *.db files in the tmp dir, which is correct multiproc behaviour). (5) Counter increment regressions still hold when reading /api/metrics with the token. (6) RBAC + 4-role login + intern CEO no-leak + iter-2 chat_stream + iter-3 streaming SLO + iter-4 metrics endpoint all green. Important: prior test files (iter1-3) still rely on REACT_APP_BACKEND_URL being exported in the shell env; iter4/iter5 files autoload via dotenv. Iter-4's `test_metrics_contains_required_series` was patched to (a) send X-Metrics-Token and (b) trigger one stream first so the labelled histogram has at least one bucket sample. The full 64-test suite completes in ~127s.",
+  "rca of the issue": "Two iter-4 tests had to be patched in this iteration to remain green under iter-5 changes: (1) Every requests.get(/api/metrics) call now needs the X-Metrics-Token header because METRICS_TOKEN is set in /app/backend/.env; without the header server returns 401. Fix: load /app/backend/.env via dotenv and pass headers={'X-Metrics-Token': METRICS_TOKEN}. (2) sentinel_stream_first_token_seconds_bucket now requires a path-labelled child to materialize before any bucket sample appears in the exposition; on a cold registry the regex `^sentinel_stream_first_token_seconds_bucket(\\{[^}]*\\})?\\s+...$` returns no match. Fix: trigger one /api/chat/stream call inside the test before asserting the bucket sample line is present. Both fixes applied in /app/backend/tests/test_sentinelrag_v4.py."
+}

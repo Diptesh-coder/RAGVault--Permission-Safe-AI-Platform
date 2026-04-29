@@ -1,10 +1,15 @@
 """Prometheus metrics for SentinelRAG ops monitoring.
 
-Counters / histograms exposed at GET /api/metrics so prod ops can alert on
-silent regressions (e.g., the streaming SDK falling back to pseudo-stream
-because the Emergent proxy upstream changed).
+Multi-process aware: when PROMETHEUS_MULTIPROC_DIR is set, render_metrics()
+aggregates counters across all uvicorn/gunicorn workers via the standard
+prometheus_client multiprocess collector.
 """
-from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+import os
+from prometheus_client import (
+    Counter, Histogram, CollectorRegistry, generate_latest, CONTENT_TYPE_LATEST,
+    multiprocess,
+)
+
 
 # Total successful streaming requests (any path: real or fallback)
 stream_total = Counter(
@@ -18,10 +23,11 @@ stream_fallback_total = Counter(
     "Streaming chat requests that fell back to pseudo-stream after a real-stream error",
 )
 
-# Time-to-first-token, measured inside llm_service.stream_answer
+# Time-to-first-token, labeled by code path so SLO graphs do not mix the two.
 stream_first_token_seconds = Histogram(
     "sentinel_stream_first_token_seconds",
     "Wall-clock seconds from stream_answer entry to the first emitted chunk",
+    labelnames=("path",),
     buckets=(0.25, 0.5, 1.0, 2.0, 4.0, 6.0, 10.0, 20.0, 60.0),
 )
 
@@ -40,4 +46,12 @@ guardrail_triggered_total = Counter(
 
 
 def render_metrics() -> tuple[bytes, str]:
+    """Return (body, content_type) for the /api/metrics response.
+
+    If PROMETHEUS_MULTIPROC_DIR is set, aggregate across worker processes.
+    """
+    if os.environ.get("PROMETHEUS_MULTIPROC_DIR"):
+        registry = CollectorRegistry()
+        multiprocess.MultiProcessCollector(registry)
+        return generate_latest(registry), CONTENT_TYPE_LATEST
     return generate_latest(), CONTENT_TYPE_LATEST
