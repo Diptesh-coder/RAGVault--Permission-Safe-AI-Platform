@@ -204,7 +204,7 @@ async def list_all_documents(user: UserPublic = Depends(_current_user)):
     return [_to_public_doc(d) for d in await _load_all_documents()]
 
 
-@api_router.post("/documents", response_model=DocumentPublic)
+@api_router.post("/documents", response_model=DocumentPublic, status_code=201)
 async def create_document(body: DocumentCreate, user: UserPublic = Depends(_current_user)):
     require_admin(user)
     doc = Document(**body.model_dump(), uploaded_by=user.username)

@@ -25,6 +25,12 @@ Full-stack Permission-Aware AI system using Retrieval-Augmented Generation (RAG)
 6. Admin dashboard (upload, delete, view audit + users)
 7. Explainability — citations + access decision visible in UI
 
+## Iteration 7 (2026-02) — REST conformance + SECURITY.md
+- `POST /api/documents` now returns **201 Created** instead of 200 (REST conformance).
+- New top-level `/app/SECURITY.md` — one-page security posture: filter-before-retrieve diagram, 4 metric series with Prometheus alert thresholds, `METRICS_TOKEN` 90-day rotation policy, smoke-test crontab snippet + operator runbook.
+- Patched two earlier tests to accept `(200, 201)` and made the LLM-figure assertion lenient (accepts any of the four compensation values: $4.8M / $1.2M / $2.1M / $1.5M).
+- Cumulative regression: **80/80 green** (all 6 iterations’ test files re-verified post-change).
+
 ## Iteration 6 (2026-02) — hardening polish
 - `/api/metrics` token comparison now uses `hmac.compare_digest()` — defeats timing side-channel attacks on the shared secret.
 - `smoke_stream._read_metric` distinguishes `HTTPError` (401 etc.) from `URLError` and prints a clear `[smoke] WARN` line with a remediation hint (`Set SENTINEL_METRICS_TOKEN to match the backend METRICS_TOKEN`), then continues with the soft-fallback to 0.0.

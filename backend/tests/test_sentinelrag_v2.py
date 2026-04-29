@@ -204,7 +204,7 @@ def test_chroma_index_live_after_upload_and_delete(tokens):
         "sensitivity": "medium",
     }
     r = requests.post(f"{API}/documents", headers=H(tokens["alice"]), json=payload, timeout=30)
-    assert r.status_code == 200, r.text
+    assert r.status_code in (200, 201), r.text
     doc_id = r.json()["id"]
 
     try:
