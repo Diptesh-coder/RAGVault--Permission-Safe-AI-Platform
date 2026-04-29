@@ -25,6 +25,13 @@ Full-stack Permission-Aware AI system using Retrieval-Augmented Generation (RAG)
 6. Admin dashboard (upload, delete, view audit + users)
 7. Explainability — citations + access decision visible in UI
 
+## Iteration 3 (2026-02) — true streaming + warmup + watchdog
+- TRUE LLM streaming via `litellm.acompletion(stream=True)` through the Emergent proxy. Measured Δ(meta → first-token) ≈ 3-5s = real Claude TTFB (vs the iter-2 pseudo-stream's 18ms uniform delay)
+- Graceful fallback: if real-stream raises, automatically falls back to pseudo-stream so callers always receive content
+- Chroma ONNX embedder warmup at startup (`rag.warmup()`) — first user query no longer pays the cold-start latency
+- Client-side SSE watchdog: 60s timeout that resets on each chunk; if `done` never arrives the UI shows "Stream interrupted." instead of hanging
+- 34/34 backend tests + 3/3 new Playwright flows green
+
 ## Iteration 2 (2026-02) — production-grade upgrades
 - Word-boundary regex guardrails (`\b…\b`) eliminate false positives like `ssn` ⊂ `lessons`
 - ChromaDB persistent vector store with overlapping chunking; RBAC+ABAC enforced as a `where` clause at the chunk level (row-level security at the DB layer)
