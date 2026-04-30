@@ -50,6 +50,8 @@ Database: Stores users, roles, and documents
 ---
 
 ## 🏗️ Architecture
+
+```text
 User Query
    │
    ▼
@@ -69,6 +71,7 @@ Filtered Output (Authorized Only)
    │
    ▼
 Audit Logging
+```
 
 ---
 
