@@ -6,7 +6,7 @@ RAGVault is designed to solve a critical problem in modern AI systems:
 
 This platform introduces:
 
-🔐 Fine-grained access control (RBAC)
+🔐 Fine-grained access control (RBAC) systems
 📚 Context-aware responses using RAG
 🧾 Audit logging for transparency
 ⚡ Scalable full-stack architecture
