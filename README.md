@@ -93,6 +93,8 @@ Chat interface
 ---
 
 ## 📂 Project Structure
+
+```bash
 RAGVault/
 ├── backend/
 │   ├── auth/              # Authentication & RBAC logic
@@ -112,6 +114,7 @@ RAGVault/
 ├── logs/
 ├── README.md
 ├── requirements.txt / package.json
+```
 
 --
 
