@@ -165,8 +165,6 @@ Real-time monitoring dashboard
 Human-in-the-loop approvals
 Integration with external APIs
 
----
-
 ## 🤝 Contributing
 
 Contributions are welcome!
