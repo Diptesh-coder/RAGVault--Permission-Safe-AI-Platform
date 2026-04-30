@@ -185,7 +185,7 @@ Create a new branch
 Make changes
 Submit a pull request
 
-##📜 License
+📜 License
 This project is licensed under the MIT License.
 
 ---
