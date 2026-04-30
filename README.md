@@ -51,17 +51,23 @@ Database: Stores users, roles, and documents
 
 ## 🏗️ Architecture
 User Query
-    ↓
+   │
+   ▼
 Authentication (Login / Token)
-    ↓
+   │
+   ▼
 RBAC Permission Check
-    ↓
-Retriever (Vector DB)
-    ↓
+   │
+   ▼
+Retriever (Vector Database)
+   │
+   ▼
 LLM (Generate Response)
-    ↓
+   │
+   ▼
 Filtered Output (Authorized Only)
-    ↓
+   │
+   ▼
 Audit Logging
 
 ---
@@ -85,24 +91,24 @@ Chat interface
 
 ## 📂 Project Structure
 RAGVault/
-│── backend/
+├── backend/
 │   ├── auth/              # Authentication & RBAC logic
 │   ├── rag/               # Retrieval + LLM pipeline
 │   ├── api/               # API routes
 │   └── utils/
 │
-│── frontend/
+├── frontend/
 │   ├── components/
 │   ├── pages/
 │   └── services/
 │
-│── database/
+├── database/
 │   ├── models/
 │   └── schema/
 │
-│── logs/
-│── README.md
-│── requirements.txt / package.json
+├── logs/
+├── README.md
+├── requirements.txt / package.json
 
 --
 
